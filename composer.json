@@ -1,0 +1,17 @@
+{
+    "name": "caichuanhai/router",
+    "description": "caichuanhai router lib",
+    "type": "library",
+    "autoload": {
+        "psr-4": {
+          "caichuanhai\\": "src/"
+        }
+      },
+    "license": "GNU General Public License v3.0",
+    "authors": [
+        {
+            "name": "caichuanhai",
+            "email": "caichuanhai123@qq.com"
+        }
+    ]
+}
