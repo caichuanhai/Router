@@ -9,7 +9,7 @@ class Router
 
 	static $routeMap = array(); /*路由表*/
 
-	static $groupRule = array('name' => null, 'prefix' => null, 'middleware' => null, ); /*保存要应用于group中的规则*/
+	static $groupRule = array('name' => null, 'prefix' => null, 'middleware' => null); /*保存要应用于group中的规则*/
 
 	private static $_defaultRoute = null; /*默认路由*/
 
@@ -20,6 +20,8 @@ class Router
 	private static $_curParam = array(); /*当前链接传递给控制器的参数*/
 
 	private static $_curRoute = null; /*当前链接所对应的路由，path\controller@method */
+
+	private static $_conpath = './'; /*控制器所在文件夹，用于检测控制器是否存在，以及加载控制器*/
 
 	private $_pattern = null; /*当前规则中的匹配模式，即要设置的路由*/
 
@@ -54,7 +56,7 @@ class Router
     public function __call($method, $arg)
     {
     	$method = strtolower($method);
-        if(in_array($method, Router::REQUEST))
+        if(in_array($method, self::REQUEST))
         {
         	array_unshift($arg, $method);
         	$method = '_setRoute';
@@ -83,11 +85,11 @@ class Router
     	$routerArr = array(
     		'target' => $target,
     		'name' => $this->_name,
-    		'middleware' => !empty($this->_middleware) ? $this->_middleware : Router::$groupRule['middleware']
+    		'middleware' => !empty($this->_middleware) ? $this->_middleware : self::$groupRule['middleware']
     	);
 
-    	if(!isset(Router::$routeMap[$this->_finalPattern])) Router::$routeMap[$this->_finalPattern][$requestMethod] = $routerArr;
-		else Router::$routeMap[$this->_finalPattern][$requestMethod] = $routerArr;
+    	if(!isset(self::$routeMap[$this->_finalPattern])) self::$routeMap[$this->_finalPattern][$requestMethod] = $routerArr;
+		else self::$routeMap[$this->_finalPattern][$requestMethod] = $routerArr;
     }
 
     /**
@@ -96,8 +98,8 @@ class Router
      */
 	private function _setName($name)
 	{
-		$this->_name = isset(Router::$groupRule['name']) ? Router::$groupRule['name'].$name : $name;
-		if(isset($this->_finalPattern)) Router::$routeMap[$this->_finalPattern][$this->_requestMethod]['name'] = $this->_name;
+		$this->_name = isset(self::$groupRule['name']) ? self::$groupRule['name'].$name : $name;
+		if(isset($this->_finalPattern)) self::$routeMap[$this->_finalPattern][$this->_requestMethod]['name'] = $this->_name;
 	}
 
 	/**
@@ -107,7 +109,7 @@ class Router
 	private function _setMiddleware($middleware)
 	{
 		$this->_middleware = is_array($middleware) ? $middleware : array($middleware);
-		if(isset($this->_finalPattern)) Router::$routeMap[$this->_finalPattern][$this->_requestMethod]['middleware'] = $this->_middleware;
+		if(isset($this->_finalPattern)) self::$routeMap[$this->_finalPattern][$this->_requestMethod]['middleware'] = $this->_middleware;
 	}
 
 	/**
@@ -120,7 +122,7 @@ class Router
 		{	
 			$routePattern = '';
 
-			if(isset(Router::$groupRule['prefix'])) $routePattern .= Router::$groupRule['prefix'].'/';
+			if(isset(self::$groupRule['prefix'])) $routePattern .= self::$groupRule['prefix'].'/';
 
 			$routePattern .= $this->_pattern;
 
@@ -146,11 +148,11 @@ class Router
 	{
 		if(is_callable($callback))
 		{
-			Router::$groupRule = array('name' => $this->_name, 'prefix' => $this->_prefix, 'middleware' => $this->_middleware);
+			self::$groupRule = array('name' => $this->_name, 'prefix' => $this->_prefix, 'middleware' => $this->_middleware);
 
 			call_user_func($callback);
 
-			Router::$groupRule = array();
+			self::$groupRule = array('name' => null, 'prefix' => null, 'middleware' => null);
 		}
 	}
 
@@ -165,11 +167,14 @@ class Router
 	}
 
 	/**
-	 * 执行路由功能入口，包括解析路由表和查找当前对应路由规则
-	 * @return [type] [description]
+	 * 控制器所在路径
+	 * @param  string $conpath [description]
+	 * @return [type]          [description]
 	 */
-	static function run()
+	static function run($conpath = '')
 	{
+		if(!empty($conpath)) self::$_conpath = rtrim($conpath, '/').'/';
+
 		$url = isset($_SERVER['PATH_INFO']) ? trim($_SERVER['PATH_INFO'], '/') : '/';
 
 		if($url == '/')
@@ -179,17 +184,17 @@ class Router
 			return;
 		}
 		
-		$found = self::_foundRouteViaUrl();
+		self::_dealPatternReg();
+		$found = self::_foundRouteViaMap();
 
-		if(!$found) $found = self::_foundRouteViaMap();
+		if(!$found)
+		{
+			$found = self::_foundRouteViaUrl();
+		}
 		
 		if(!$found) self::$_curRoute = self::$_404Route;
-	}
 
-	private static function _configRouteMap()
-	{
-		if(is_file(CONFPATH.'routes.php')) include_once CONFPATH.'routes.php';
-		self::_dealPatternReg();
+		self::loadController();
 	}
 
 	/**
@@ -203,7 +208,7 @@ class Router
 		$url = isset($_SERVER['PATH_INFO']) ? trim($_SERVER['PATH_INFO'], '/') : '/';
 		$arrayUrl = explode('/', $url);
 		$classPath = '';
-		while(isset($arrayUrl[0]) AND is_dir(CONPATH.$classPath.$arrayUrl[0]))
+		while(isset($arrayUrl[0]) AND is_dir(self::$_conpath.$classPath.$arrayUrl[0]))
 		{
 			$classPath .= array_shift($arrayUrl).'\\';
 		}
@@ -213,18 +218,19 @@ class Router
 		if(isset($arrayUrl[0])) $methodName = array_shift($arrayUrl);
 		else $methodName = self::$_defaultMethod;
 
-		/*看看对应的控制器类文件是否存在，并且方法是否可访问*/
-		$controllerFile = CONPATH.$classPath.$className.'.php';
+		/*看看对应的控制器类文件是否存在*/
+		$controllerFile = self::$_conpath.$classPath.$className.'.php';
 		if(file_exists($controllerFile))
 		{
 			require_once $controllerFile;
-			$refClass = new ReflectionClass($className);
-			if($refClass->hasMethod($methodName) AND $refClass->getMethod($methodName)->isPublic())
-			{
+			/*如果使用反射，则控制器中的__call和__callStatic可能无法正常使用，可根据需要取消注释*/
+			// $refClass = new \ReflectionClass($className);
+			// if($refClass->hasMethod($methodName) AND $refClass->getMethod($methodName)->isPublic())
+			// {
 				self::$_curRoute = $classPath.$className.'@'.$methodName;
 				self::$_curParam = $arrayUrl;
 				$found = true;
-			}
+			// }
 		}
 
 		return $found;
@@ -240,9 +246,7 @@ class Router
 		$curRequestMethod = strtolower($_SERVER['REQUEST_METHOD']);
 		$url = isset($_SERVER['PATH_INFO']) ? trim($_SERVER['PATH_INFO'], '/') : '/';
 
-		self::_configRouteMap();
-
-		foreach(Router::$routeMap as $pattern => $route)
+		foreach(self::$routeMap as $pattern => $route)
 		{
 			if(!isset($route[$curRequestMethod]) AND !isset($route['any']))
 			{
@@ -277,49 +281,62 @@ class Router
 	{
 		$search = array();
 		$replace = array();
-		foreach(Router::REGEXPATTERN as $k => $v)
+		foreach(self::REGEXPATTERN as $k => $v)
 		{
 			$search[] = $k;
 			$replace[] = $v;
 		}
 
-		$routeMapPattern = array_keys(Router::$routeMap);
+		$routeMapPattern = array_keys(self::$routeMap);
 		foreach($routeMapPattern as $k => &$v)
 		{
 			$v = '/^'.str_replace($search, $replace, str_replace('/', '\/', $v)).'/';
 		}
-		Router::$routeMap = array_combine($routeMapPattern, array_slice(Router::$routeMap, 0));
+		self::$routeMap = array_combine($routeMapPattern, array_slice(self::$routeMap, 0));
 	}
 
 	/**
 	 * 加载控制器并运行方法
 	 * @param  string $route 控制器方法路径，格式为：path\controller@method，不传则取self::$_curRoute
-	 * @param  array  $param 传给方法的参数数组，不传则取Router::$_curParam
+	 * @param  array  $param self::$_curParam
+	 * @param  bool  $is404 当前调用控制器是否为404控制器
 	 * @return
 	 */
-	static function loadController($route = '', $param = array())
+	static function loadController($route = '', $param = array(), $is404 = false)
 	{
 		if(empty($route)) $route = self::$_curRoute;
 		if(empty($param)) $param = self::$_curParam;
 
-		$route = explode('@', $route);
-		$method = array_pop($route);
-		$class = explode('\\', $route[0]);
-		$className = array_pop($class);
-
-		$controllerFile = CONPATH.'/'.$route[0].'.php';
-		if(file_exists($controllerFile))
+		if(is_callable($route))
 		{
-			require_once $controllerFile;
-			$refClass = new ReflectionClass($className);
-			if($refClass->hasMethod($method) AND $refClass->getMethod($method)->isPublic())
-			{
-				$CCH = new $className();
-				call_user_func_array(array(&$CCH, $method), $param);
-				return;
-			}
+			/*如果该路由对应的route是一个回调函数，则直接调用，不用再解析了*/
+			call_user_func_array($route, $param);
+			return;
 		}
-		exit('404 page not found');
+		else
+		{
+			$route = explode('@', $route);
+			$method = array_pop($route);
+			$class = explode('\\', $route[0]);
+			$className = array_pop($class);
+
+			$controllerFile = self::$_conpath.'/'.$route[0].'.php';
+			if(file_exists($controllerFile))
+			{
+				require_once $controllerFile;
+				/*如果使用反射，则控制器中的__call和__callStatic可能无法正常使用，可根据需要取消注释*/
+				// $refClass = new \ReflectionClass($className);
+				// if($refClass->hasMethod($method) AND $refClass->getMethod($method)->isPublic())
+				// {
+					$CCH = new $className();
+					call_user_func_array(array(&$CCH, $method), $param);
+					return;
+				// }
+			}
+
+			if(!$is404) self::redirect404();
+			else exit('404 page not found');
+		}
 	}
 
 	/**
@@ -327,27 +344,27 @@ class Router
 	 */
 	static function redirect404()
 	{
-		self::loadController(self::$_404Route, array());
+		self::loadController(self::$_404Route, array(), true);
 	}
 
 	/**
-	 * 跳转到
-	 * @param  [type] $name [description]
-	 * @return [type]       [description]
+	 * 跳转到指定路由名的控制器方法
+	 * @param  string $name 路由名
+	 * @param  array $param 要传递到该路由的参数，索引数组
 	 */
-	// static function redirect($name)
-	// {
-	// 	foreach(Router::$routeMap as $v)
-	// 	{
-	// 		foreach($v as $sv)
-	// 		{
-	// 			if($sv['name'] == $name)
-	// 			{
-	// 				self::loadController($sv['target'], array())
-	// 				return
-	// 			}
-	// 		}
-	// 	}
-	// }
+	static function redirect($name, $param = array())
+	{
+		foreach(self::$routeMap as $v)
+		{
+			foreach($v as $sv)
+			{
+				if($sv['name'] == $name)
+				{
+					self::loadController($sv['target'], $param);
+					return;
+				}
+			}
+		}
+	}
 
 }
