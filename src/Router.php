@@ -167,8 +167,8 @@ class Router
 	}
 
 	/**
-	 * 控制器所在路径
-	 * @param  string $conpath [description]
+	 * 运行路由功能
+	 * @param  string $conpath 控制器所在路径
 	 * @return [type]          [description]
 	 */
 	static function run($conpath = '')
